@@ -31,7 +31,7 @@ class Connection:
             print("{} - MIDI input port is listening for control messages".format(input_port))
             # Handle incoming MIDI messages
             for msg in input_port:
-                # print("MIDI input message received: ", msg)
+                print("MIDI input message received: ", msg)
                 self.messages.append(msg)
 
     # The following are intended to be externally accessed/public methods

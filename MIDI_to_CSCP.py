@@ -39,10 +39,12 @@ def convert_message(message, mapping):
     # TODO - figure out how to structure json mapping file to allow fewer conditionals in the following
     # (not too bad at the moment, but as I add more controls and different mappings/modes it will get cumbersome
     # TODO - passing the control mapping dict for each message feels inefficient
+    print(str(message.channel))
     if message.type == "pitchwheel":
         try:
             command = mapping["control_map"]["pitchwheel"]["command"]
-            strip = mapping["control_map"]["pitchwheel"]["ch_to_strip"][str(message.channel)]
+            # strip = mapping["control_map"]["pitchwheel"]["ch_to_strip"][str(message.channel)]
+            strip = str(message.channel)
             value = _adjust_scale(message.pitch)
         except KeyError:
             return False

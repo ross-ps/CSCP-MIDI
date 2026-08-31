@@ -26,6 +26,13 @@ import mido.backends.rtmidi  # DO NOT DELETE THIS EVEN THOUGH PYCHARM THINKS IT 
 
 def main():
     print("\n", 27 * "-", "\n", 8 * " ", "CSCP-MIDI\n", 27 * "-")  # Formatted title/heading
+
+    print('\nMIDI Outputs:')
+    print(*mido.get_output_names(), sep='\n')
+    print('\nMIDI Inputs:')
+    print(*mido.get_input_names(), sep='\n')
+    print() 
+
     # Load config settings with user confirm/edit
     settings = config.get_settings()
 
@@ -44,7 +51,10 @@ def main():
         return False
 
     # Open MIDI ports and start thread receiving incoming MIDI messages
-    midi = MIDI_connection.Connection(settings["MIDI -> CSCP port"], settings["CSCP -> MIDI port"])
+    midi_list = [
+        MIDI_connection.Connection(settings["MIDI Devices"][0]["MIDI -> CSCP port"], settings["MIDI Devices"][0]["CSCP -> MIDI port"]),
+        MIDI_connection.Connection(settings["MIDI Devices"][1]["MIDI -> CSCP port"], settings["MIDI Devices"][1]["CSCP -> MIDI port"])
+    ]
 
     # Open CSCP connection and start thread receiving incoming CSCP messages
     cscp = CSCP_connection.Connection(settings["Mixer IP Address"], settings["Mixer CSCP Port"])
@@ -54,24 +64,29 @@ def main():
 
     while True:
         # Get the oldest received MIDI message if there are any and send it to the CSCP device
-        midi_in = midi.get_message()
-        if midi_in:
-            #print(20*"-", "\nMIDI RECEIVED: {} [MIDI messages remaining in connection buffer:{}"
-            #      .format(midi_in, len(midi.messages)))
+        for i,midi in enumerate(midi_list):
+            midi_in = midi.get_message()
+            if midi_in:
+                #print(20*"-", "\nMIDI RECEIVED: {} [MIDI messages remaining in connection buffer:{}"
+                #      .format(midi_in, len(midi.messages)))
+                midi_in.channel = midi_in.channel +  settings["MIDI Devices"][i]["Channel Offset"]
+                print('MIDI IN')
+                # Convert MIDI to CSCP Message object
+                cscp_message = MIDI_to_CSCP.convert_message(midi_in, control_map)
+                
+                if cscp_message:
+                    print('CSCP')
+                    print(20*"-", "\nMIDI RECEIVED", midi_in)
+                    print("converted to CSCP Message object:", cscp_message)
 
-            # Convert MIDI to CSCP Message object
-            cscp_message = MIDI_to_CSCP.convert_message(midi_in, control_map)
-            if cscp_message:
-                print(20*"-", "\nMIDI RECEIVED", midi_in)
-                print("converted to CSCP Message object:", cscp_message)
-
-            if cscp_message and cscp.status == "Connected":
-                # Send CSCP message bytes to mixer
-                # print("DEBUG MAIN", cscp_message)
-                cscp.send(cscp_message.encoded)
+                if cscp_message and cscp.status == "Connected":
+                    # Send CSCP message bytes to mixer
+                    # print("DEBUG MAIN", cscp_message)
+                    cscp.send(cscp_message.encoded)
 
         # Get the oldest received CSCP message if there are any and send it to the MIDI device
-        cscp_in = cscp.get_message()
+        # cscp_in = cscp.get_message()
+        cscp_in = None
         if cscp_in:
             print(20 * "-", "\nCSCP RECEIVED:", cscp_in, ". CSCP messages remaining in connection buffer:",
                   len(cscp.messages))

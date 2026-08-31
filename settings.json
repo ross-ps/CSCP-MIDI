@@ -1,9 +1,19 @@
 {
     "Mixer Name": "Unknown",
-    "Mixer IP Address": "127.0.0.1",
-    "Mixer CSCP Port": 12345,
-    "CSCP -> MIDI port": "Reaper Input 1",
-    "MIDI -> CSCP port": "Reaper Output 1",
+    "Mixer IP Address": "10.91.34.81",
+    "Mixer CSCP Port": 49202,
+    "MIDI Devices": [
+        {
+            "CSCP -> MIDI port": "iCON V1-M 1",
+            "MIDI -> CSCP port": "iCON V1-M 0",
+            "Channel Offset": 24
+        },
+        {
+            "CSCP -> MIDI port": "iCON V1-X2 V1.23 5",
+            "MIDI -> CSCP port": "iCON V1-X2 V1.23 4",
+            "Channel Offset": 16
+        }
+    ],
     "Mode/Mapping": [
         "Sonar/Reaper",
         "korg_sonar_reaper.json"
