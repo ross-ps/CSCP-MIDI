@@ -29,7 +29,7 @@ def adjust_scale(value):
 
 def convert_message(msg, mapping):
     # message = CSCP_decode.Message(message)
-    # print(message)
+    print(msg)
     if msg.operation == "fader_move":
         mtype = "pitchwheel"
         try:

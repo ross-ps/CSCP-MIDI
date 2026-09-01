@@ -30,7 +30,7 @@ def _adjust_scale(level):
     return converted_level
 
 
-def convert_message(message, mapping):
+def convert_message(message, mapping, offset=0):
     """
     :param message: MIDI message from mido
     :param mapping: dict loaded from json control mapping file
@@ -43,7 +43,6 @@ def convert_message(message, mapping):
         try:
             command = mapping["control_map"]["pitchwheel"]["command"]
             strip = mapping["control_map"]["pitchwheel"]["ch_to_strip"][str(message.channel)]
-            # strip = str(message.channel)
             value = _adjust_scale(message.pitch)
         except KeyError:
             return False
@@ -53,7 +52,7 @@ def convert_message(message, mapping):
     elif message.type == "note_on":
         try:
             command = mapping["control_map"]["note_on"][str(message.note)]["command"]
-            strip = mapping["control_map"]["note_on"][str(message.note)]["strip"]
+            strip = mapping["control_map"]["note_on"][str(message.note)]["strip"] + offset
             value = mapping["control_map"]["note_on"][str(message.note)]["velocity"][str(message.velocity)]
         except KeyError:
             return False

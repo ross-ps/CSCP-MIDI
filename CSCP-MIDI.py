@@ -33,6 +33,24 @@ class AppController:
         self.midi_connections = []
         self.lock = threading.RLock()
         self.messages_available = threading.Event()
+        self.strip_cuts = {
+            "0" : False,
+            "1" : False,
+            "2" : False,
+            "3" : False,
+            "4" : False,
+            "5" : False,
+            "6" : False,
+            "7" : False,
+            "8" : False,
+            "9" : False,
+            "10" : False,
+            "11" : False,
+            "12" : False,
+            "13" : False,
+            "14" : False,
+            "15" : False 
+        }
 
     def start(self, settings):
         with self.lock:
@@ -75,8 +93,11 @@ class AppController:
             for index, midi_connection in enumerate(self.midi_connections):
                 midi_message = midi_connection.get_message()
                 while midi_message:
+
                     midi_message.channel += settings["MIDI Devices"][index]["Channel Offset"]
-                    cscp_message = MIDI_to_CSCP.convert_message(midi_message, self.control_map)
+
+                    cscp_message = MIDI_to_CSCP.convert_message(midi_message, self.control_map, settings["MIDI Devices"][index]["Channel Offset"])
+
                     if cscp_message and self.cscp.status == "Connected":
                         self.cscp.send(cscp_message.encoded)
                     midi_message = midi_connection.get_message()
@@ -85,8 +106,11 @@ class AppController:
             while cscp_message:
                 midi_message = CSCP_to_MIDI.convert_message(cscp_message, self.control_map)
                 if midi_message:
-                    for midi_connection in self.midi_connections:
-                        midi_connection.send_message(midi_message)
+                    
+                    for i, midi_connection in enumerate(self.midi_connections):
+                        if(midi_message.channel >= settings["MIDI Devices"][i]["Channel Offset"] and midi_message.channel < settings["MIDI Devices"][i]["Channel Offset"]+8):
+                            midi_message.channel -= settings["MIDI Devices"][i]["Channel Offset"]
+                            midi_connection.send_message(midi_message)
                 cscp_message = self.cscp.get_message()
 
 
