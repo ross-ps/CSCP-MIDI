@@ -7,13 +7,15 @@
 # See Project_Notes.txt for info on the implementation - how the app works.
 
 import json
+import threading
 
-# My local files
-import CSCP_MIDI_settings as config
-import MIDI_connection
+from SettingsWindow import SettingsWindow
+
 import CSCP_connection
-import MIDI_to_CSCP
 import CSCP_to_MIDI
+import MIDI_connection
+import MIDI_to_CSCP
+import traceback
 
 # mido uses rtmidi backend
 # For some reason I have to ensure I have rtmidi installed in order for mido to work
@@ -24,76 +26,100 @@ import CSCP_to_MIDI
 import mido.backends.rtmidi  # DO NOT DELETE THIS EVEN THOUGH PYCHARM THINKS IT IS NOT REQUIRED
 
 
+class AppController:
+    def __init__(self):
+        self.cscp = None
+        self.control_map = None
+        self.midi_connections = []
+        self.lock = threading.RLock()
+        self.messages_available = threading.Event()
+
+    def start(self, settings):
+        with self.lock:
+            self.stop()
+            try:
+                with open(settings["Mode/Mapping"][1], "r") as control_map_file:
+                    self.control_map = json.load(control_map_file)
+                self.midi_connections = [
+                    MIDI_connection.Connection(
+                        device["MIDI -> CSCP port"],
+                        device["CSCP -> MIDI port"],
+                        self.messages_available,
+                    )
+                    for device in settings["MIDI Devices"]
+                ]
+                self.cscp = CSCP_connection.Connection(
+                    settings["Mixer IP Address"],
+                    settings["Mixer CSCP Port"],
+                    self.messages_available,
+                )
+            except Exception:
+                self.stop()
+                raise
+
+    def stop(self):
+        with self.lock:
+            for connection in self.midi_connections:
+                connection.close()
+            self.midi_connections = []
+            if self.cscp is not None:
+                self.cscp.close()
+                self.cscp = None
+            self.control_map = None
+
+    def process_messages(self, settings):
+        with self.lock:
+            if self.cscp is None or self.control_map is None:
+                return
+
+            for index, midi_connection in enumerate(self.midi_connections):
+                midi_message = midi_connection.get_message()
+                while midi_message:
+                    midi_message.channel += settings["MIDI Devices"][index]["Channel Offset"]
+                    cscp_message = MIDI_to_CSCP.convert_message(midi_message, self.control_map)
+                    if cscp_message and self.cscp.status == "Connected":
+                        self.cscp.send(cscp_message.encoded)
+                    midi_message = midi_connection.get_message()
+
+            cscp_message = self.cscp.get_message()
+            while cscp_message:
+                midi_message = CSCP_to_MIDI.convert_message(cscp_message, self.control_map)
+                if midi_message:
+                    for midi_connection in self.midi_connections:
+                        midi_connection.send_message(midi_message)
+                cscp_message = self.cscp.get_message()
+
+
 def main():
-    print("\n", 27 * "-", "\n", 8 * " ", "CSCP-MIDI\n", 27 * "-")  # Formatted title/heading
+    controller = AppController()
+    stop_event = threading.Event()
 
-    print('\nMIDI Outputs:')
-    print(*mido.get_output_names(), sep='\n')
-    print('\nMIDI Inputs:')
-    print(*mido.get_input_names(), sep='\n')
-    print() 
+    def shutdown():
+        stop_event.set()
+        controller.messages_available.set()
+        controller.stop()
+        if worker.is_alive():
+            worker.join()
 
-    # Load config settings with user confirm/edit
-    settings = config.get_settings()
+    settings_window = SettingsWindow(controller, shutdown)
 
-    # Load the chosen control mapping json file
+    def process_messages():
+        while not stop_event.is_set():
+            controller.messages_available.wait()
+            controller.messages_available.clear()
+            if stop_event.is_set():
+                break
+            try:
+                controller.process_messages(settings_window.settings)
+            except Exception as error:
+                print("[APP] Message processing failed: {}".format(error))
+
+    worker = threading.Thread(target=process_messages, name="CSCP-MIDI backend")
+    worker.start()
     try:
-        with open(settings["Mode/Mapping"][1], "r") as control_map:
-            control_map = json.load(control_map)
-    except FileNotFoundError:
-        print("'{}' file not found!".format(settings["Mode/Mapping"][1]))
-        return False
-    except json.decoder.JSONDecodeError:
-        print("'{}' file is invalid!".format(settings["Mode/Mapping"][1]))
-        return False
-    except TypeError:
-        print("** Need to select a control mode/mapping file! **")
-        return False
-
-    # Open MIDI ports and start thread receiving incoming MIDI messages
-    midi_list = [
-        MIDI_connection.Connection(settings["MIDI Devices"][0]["MIDI -> CSCP port"], settings["MIDI Devices"][0]["CSCP -> MIDI port"]),
-        MIDI_connection.Connection(settings["MIDI Devices"][1]["MIDI -> CSCP port"], settings["MIDI Devices"][1]["CSCP -> MIDI port"])
-    ]
-
-    # Open CSCP connection and start thread receiving incoming CSCP messages
-    cscp = CSCP_connection.Connection(settings["Mixer IP Address"], settings["Mixer CSCP Port"])
-
-    # Store current settings for next start up
-    config.save_settings(settings)
-
-    while True:
-        # Get the oldest received MIDI message if there are any and send it to the CSCP device
-        for i,midi in enumerate(midi_list):
-            midi_in = midi.get_message()
-            if midi_in:
-                #print(20*"-", "\nMIDI RECEIVED: {} [MIDI messages remaining in connection buffer:{}"
-                #      .format(midi_in, len(midi.messages)))
-                midi_in.channel = midi_in.channel +  settings["MIDI Devices"][i]["Channel Offset"]
-                print('MIDI IN')
-                # Convert MIDI to CSCP Message object
-                cscp_message = MIDI_to_CSCP.convert_message(midi_in, control_map)
-                
-                if cscp_message:
-                    print('CSCP')
-                    print(20*"-", "\nMIDI RECEIVED", midi_in)
-                    print("converted to CSCP Message object:", cscp_message)
-
-                if cscp_message and cscp.status == "Connected":
-                    # Send CSCP message bytes to mixer
-                    # print("DEBUG MAIN", cscp_message)
-                    cscp.send(cscp_message.encoded)
-
-        # Get the oldest received CSCP message if there are any and send it to the MIDI device
-        # cscp_in = cscp.get_message()
-        cscp_in = None
-        if cscp_in:
-            print(20 * "-", "\nCSCP RECEIVED:", cscp_in, ". CSCP messages remaining in connection buffer:",
-                  len(cscp.messages))
-            midi_msg = CSCP_to_MIDI.convert_message(cscp_in, control_map)
-            print("Translated to MIDI:", midi_msg)
-            if midi_msg:
-                midi.send_message(midi_msg)
+        settings_window.run()
+    finally:
+        shutdown()
 
 
 if __name__ == '__main__':

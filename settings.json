@@ -6,12 +6,12 @@
         {
             "CSCP -> MIDI port": "iCON V1-M 1",
             "MIDI -> CSCP port": "iCON V1-M 0",
-            "Channel Offset": 24
+            "Channel Offset": 0
         },
         {
             "CSCP -> MIDI port": "iCON V1-X2 V1.23 5",
             "MIDI -> CSCP port": "iCON V1-X2 V1.23 4",
-            "Channel Offset": 16
+            "Channel Offset": 8
         }
     ],
     "Mode/Mapping": [

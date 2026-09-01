@@ -6,33 +6,44 @@
 # Copyright Peter Walker 2020.
 # Feedback - peter.allan.walker@gmail.com
 
-import mido
 import threading
+from collections import deque
+
+import mido
 
 
 class Connection:
 
-    def __init__(self, midi_input, midi_output):
+    def __init__(self, midi_input, midi_output, messages_available=None):
         self.input = midi_input
         self.output = midi_output
-        self.messages = []
+        self.messages = deque()
+        self.messages_available = messages_available
+        self.stopped = threading.Event()
+        self.input_port = None
+        self.transmitter = mido.open_output(self.output)
 
         self.receiver = threading.Thread(target=self._run)  # target is the method called when thread starts
         self.receiver.daemon = True  # Important - without this, cannot kill with control+c
         self.receiver.start()  # calls target - self.run()
 
-        self.transmitter = mido.open_output(self.output)
-
     def _run(self):
         """
         Start listening for messages on the MIDI input
         """
-        with mido.open_input(self.input) as input_port:
+        input_port = mido.open_input(self.input)
+        self.input_port = input_port
+        try:
             print("{} - MIDI input port is listening for control messages".format(input_port))
-            # Handle incoming MIDI messages
             for msg in input_port:
-                print("MIDI input message received: ", msg)
+                if self.stopped.is_set():
+                    break
                 self.messages.append(msg)
+                if self.messages_available is not None:
+                    self.messages_available.set()
+        finally:
+            self.input_port = None
+            input_port.close()
 
     # The following are intended to be externally accessed/public methods
     def get_message(self):
@@ -40,26 +51,20 @@ class Connection:
         Returns and removes first message from self.messages
         :return:
         """
-        r = False
-        if self.messages:
-            r = self.messages[0]
-            self.messages = self.messages[1:]
-        return r
+        try:
+            return self.messages.popleft()
+        except IndexError:
+            return False
 
     def send_message(self, msg):
         # print("DEBUG CSCP SEND", msg)
         self.transmitter.send(msg)
 
-
-# TODO - Check the following
-#  - Am I actually calling it and if so is it doing the right things?
-# ... in cscp_connection, close is a method of the class! (not sure either are correct)
-def close(self):
-    self.input.close()
-    self.output.close()
-    self.receiver.stop()
-    self.transmitter.close()
-    # print(self.receiver.getName())
+    def close(self):
+        self.stopped.set()
+        if self.input_port is not None:
+            self.input_port.close()
+        self.transmitter.close()
 
 
 if __name__ == '__main__':

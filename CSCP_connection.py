@@ -18,6 +18,8 @@ import CSCP_unpack as unpack
 import CSCP_decode as parse
 import CSCP_encode as encode
 
+import traceback
+
 TIMEOUT = 3  # how long to wait when starting connection and receiving data.
 RECEIVE_TIMEOUT = 10
 
@@ -31,13 +33,15 @@ class Connection:
     When connected, validates received messages and stores them as CSCP Message objects
     Provides methods to get received messages and to send CSCP Message objects
     """
-    def __init__(self, ip_address, tcp_port):
+    def __init__(self, ip_address, tcp_port, messages_available=None):
 
         self.address = ip_address
         self.port = tcp_port
         self.sock = False
         self.status = 'Starting'
         self.messages = []
+        self.messages_available = messages_available
+        self.stopped = threading.Event()
 
         # Potentially, there may be residual data at the end of chunk of received data
         # that cannot be parsed but might be the beginning of a message
@@ -56,6 +60,9 @@ class Connection:
     def _connect(self):
         """ Called by _run on initialisation of Connection class """
 
+        if self.stopped.is_set():
+            return
+
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(TIMEOUT)
@@ -67,9 +74,10 @@ class Connection:
             self.send(ping)
             self.status = "Connected"
 
-        except socket.timeout:
+        except (socket.timeout, OSError):
             print('CSCP_connection: Failed to create connection with IP address {} on port {}'.format(self.address, self.port))
-            self.close()
+            if self.sock:
+                self.sock.close()
             self.sock = False
 
     def _run(self):
@@ -78,11 +86,14 @@ class Connection:
         Make and monitor a connection and listen for incoming CSCP messages
         """
         # if not connected, try to create a socket connection every 5s.
-        while not self.sock:
+        while not self.sock and not self.stopped.is_set():
             if not self.status == 'Connection Lost!':
                 self.status = 'Not Connected'
             self._connect()
-            time.sleep(5)  # Wait before trying to connect again
+            self.stopped.wait(5)  # Wait before trying to connect again
+
+        if self.stopped.is_set():
+            return
 
         # TODO - Check the following if I'm missing messages or getting jittery fader control
         self.sock.settimeout(RECEIVE_TIMEOUT)
@@ -90,11 +101,13 @@ class Connection:
         self.pinged = False
 
         # Listen for incoming messages
-        while True:
+        while not self.stopped.is_set():
             try:
                 data = self.sock.recv(1024)
             except socket.timeout:
                 data = False
+            except OSError:
+                break
 
             # print('CSCP_connection run: data received', data, 'pinged', self.pinged)
 
@@ -106,14 +119,15 @@ class Connection:
                 if messages:
                     for msg in messages:
                         self.messages.append(parse.Message(msg))
+                    if self.messages_available is not None:
+                        self.messages_available.set()
 
             elif self.pinged:
                 # No data received even after mixer being pinged
                 self.status = "Connection Lost!"
                 #print("DEBUG CSCP_connect, dropping connection!")
                 self.close()
-                self._connect()
-                self._run()
+                break
 
             else:
                 # No data received, send a message to see if the mixer is still there
@@ -124,14 +138,14 @@ class Connection:
                 self.send(ping)
 
     def close(self):
-        self.sock.close()
-        try:
-            # TODO - Check this. Pycharm is highlighting it but not similar usage in MIDI_connection
-            # ... close is a regular function in midi_connection though, not a class method!
-            self.receiver.stop()
-        # TODO - What type of exception will threading raise if it can't stop the thread?
-        except:
-            pass
+        self.stopped.set()
+        if self.sock:
+            try:
+                self.sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            self.sock.close()
+            self.sock = False
 
     # PUBLIC METHODS
     def send(self, msg):
@@ -143,7 +157,7 @@ class Connection:
             # TODO - take message object so dont have to pass msg.encoded in main
             # Will need to fix the ping read console info message from encode.
             self.sock.sendall(msg)
-        except socket.timeout:
+        except (socket.timeout, OSError, AttributeError):
             pass
 
     def get_message(self):
