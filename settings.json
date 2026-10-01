@@ -1,21 +1,61 @@
 {
-    "Mixer Name": "Unknown",
-    "Mixer IP Address": "10.91.34.81",
-    "Mixer CSCP Port": 49202,
-    "MIDI Devices": [
+    "Mixers": [
         {
-            "CSCP -> MIDI port": "iCON V1-M 1",
-            "MIDI -> CSCP port": "iCON V1-M 0",
-            "Channel Offset": 0
+            "Name": "CTA Argo S",
+            "IP Address": "10.91.34.81",
+            "Port": 49201
         },
         {
-            "CSCP -> MIDI port": "iCON V1-X2 V1.23 5",
-            "MIDI -> CSCP port": "iCON V1-X2 V1.23 4",
-            "Channel Offset": 8
+            "Name": "CTB Argo S",
+            "IP Address": "10.91.34.83",
+            "Port": 49202
+        },
+        {
+            "Name": "CTC Argo M",
+            "IP Address": "10.91.34.85",
+            "Port": 49203
+        }
+    ],
+    "Channel Mapping Version": 2,
+    "MIDI Devices": [
+        {
+            "Name": "iCON V1-M (9 Faders)",
+            "Enabled": true,
+            "CSCP -> MIDI port": "iCON V1-M 1",
+            "MIDI -> CSCP port": "iCON V1-M 0",
+            "Channel Mapping": [
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33
+            ]
+        },
+        {
+            "Name": "iCON V1-X (8 Faders)",
+            "Enabled": true,
+            "CSCP -> MIDI port": "iCON V1-X2 5",
+            "MIDI -> CSCP port": "iCON V1-X2 4",
+            "Channel Mapping": [
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                18
+            ]
         }
     ],
     "Mode/Mapping": [
         "Sonar/Reaper",
         "korg_sonar_reaper.json"
-    ]
+    ],
+    "Mixer Name": "CTA Argo S",
+    "Debug Logging": false
 }

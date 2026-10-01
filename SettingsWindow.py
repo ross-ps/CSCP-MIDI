@@ -17,8 +17,8 @@ class SettingsWindow:
         self.window.title("CSCP-MIDI Settings")
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self._build_ui()
-        self.refresh_midi_ports()
         self._set_fields(self.settings)
+        self.refresh_midi_ports()
         self._apply_settings(show_error=False)
 
     def _load_settings(self):
@@ -27,14 +27,52 @@ class SettingsWindow:
                 settings = json.load(settings_file)
         except (FileNotFoundError, json.JSONDecodeError):
             settings = {}
-        settings.setdefault("Mixer Name", "Unknown")
-        settings.setdefault("Mixer IP Address", "")
-        settings.setdefault("Mixer CSCP Port", 49202)
+        mixers = settings.setdefault("Mixers", [])
+        if not mixers and settings.get("Mixer IP Address"):
+            mixers.append({
+                "Name": settings.get("Mixer Name", "Unknown"),
+                "IP Address": settings["Mixer IP Address"],
+                "Port": settings.get("Mixer CSCP Port", 49202),
+            })
+        selected_name = settings.get("Mixer Name")
+        if not any(mixer.get("Name") == selected_name for mixer in mixers) and mixers:
+            settings["Mixer Name"] = mixers[0].get("Name", "")
+        settings.pop("Mixer IP Address", None)
+        settings.pop("Mixer CSCP Port", None)
+        settings.setdefault("Debug Logging", False)
         settings.setdefault("Mode/Mapping", ["Sonar/Reaper", "korg_sonar_reaper.json"])
         devices = settings.setdefault("MIDI Devices", [])
+        mapping_version = settings.get("Channel Mapping Version", 0)
+        defaults = ("iCON V1-M (9 Faders)", "iCON V1-X (8 Faders)")
         while len(devices) < 2:
-            devices.append({"CSCP -> MIDI port": "", "MIDI -> CSCP port": "", "Channel Offset": 0})
+            devices.append({"Name": defaults[len(devices)], "Enabled": True, "CSCP -> MIDI port": "", "MIDI -> CSCP port": "", "Channel Mapping": []})
+        for device in devices:
+            device.setdefault("Name", "MIDI Device")
+            device.setdefault("Enabled", True)
+            count = self._fader_count(device)
+            if not device.get("Channel Mapping"):
+                offset = device.pop("Channel Offset", 0)
+                channel_mapping = list(range(offset + 1, offset + count + 1))
+            else:
+                channel_mapping = [int(strip) for strip in device["Channel Mapping"]]
+                if mapping_version < 2:
+                    channel_mapping = [strip + 1 for strip in channel_mapping]
+            if len(channel_mapping) < count:
+                first_new_strip = max(channel_mapping, default=0) + 1
+                channel_mapping.extend(range(first_new_strip, first_new_strip + count - len(channel_mapping)))
+            device["Channel Mapping"] = channel_mapping
+            device.pop("Channel Offset", None)
+        settings["Channel Mapping Version"] = 2
         return settings
+
+    @staticmethod
+    def _fader_count(device):
+        name = device.get("Name", "")
+        if "V1-M" in name:
+            return 9
+        if "V1-X" in name:
+            return 8
+        return len(device.get("Channel Mapping", [])) or 8
 
     def _build_ui(self):
         content = ttk.Frame(self.window, padding=12)
@@ -42,30 +80,39 @@ class SettingsWindow:
         self.window.columnconfigure(0, weight=1)
         mixer_group = ttk.LabelFrame(content, text="Mixer", padding=8)
         mixer_group.grid(row=0, column=0, sticky="ew")
-        ttk.Label(mixer_group, text="IP address").grid(row=0, column=0, sticky="w")
-        self.mixer_ip = ttk.Entry(mixer_group, width=32)
-        self.mixer_ip.grid(row=0, column=1, sticky="ew", padx=(8, 0))
-        ttk.Label(mixer_group, text="CSCP port").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        self.mixer_port = tk.Spinbox(mixer_group, from_=1, to=65535, width=10)
-        self.mixer_port.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
-        mixer_group.columnconfigure(1, weight=1)
+        self.mixer_names = [mixer.get("Name", "") for mixer in self.settings.get("Mixers", [])]
+        self.mixer_choice = ttk.Combobox(mixer_group, state="readonly", values=self.mixer_names, width=32)
+        self.mixer_choice.grid(row=0, column=0, sticky="ew")
+        self.mixer_choice.bind("<<ComboboxSelected>>", self._update_mixer_details)
+        self.mixer_details = ttk.Label(mixer_group)
+        self.mixer_details.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        mixer_group.columnconfigure(0, weight=1)
 
         self.device_fields = []
         devices_layout = ttk.Frame(content)
         devices_layout.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         for index in range(2):
-            group = ttk.LabelFrame(devices_layout, text="MIDI Device {}".format(index + 1), padding=8)
+            device = self.settings["MIDI Devices"][index]
+            group = ttk.LabelFrame(devices_layout, text=device["Name"], padding=8)
             group.grid(row=0, column=index, sticky="nsew", padx=(0, 8) if index == 0 else (0, 0))
-            ttk.Label(group, text="CSCP to MIDI").grid(row=0, column=0, sticky="w")
+            enabled = tk.BooleanVar(value=bool(device["Enabled"]))
+            ttk.Checkbutton(group, text="Enabled", variable=enabled).grid(row=0, column=0, columnspan=5, sticky="w")
+            ttk.Label(group, text="CSCP to MIDI").grid(row=1, column=0, sticky="w")
             output_port = ttk.Combobox(group, state="readonly", width=30)
-            output_port.grid(row=1, column=0, sticky="ew", pady=(2, 6))
-            ttk.Label(group, text="MIDI to CSCP").grid(row=2, column=0, sticky="w")
+            output_port.grid(row=2, column=0, columnspan=5, sticky="ew", pady=(2, 6))
+            ttk.Label(group, text="MIDI to CSCP").grid(row=3, column=0, sticky="w")
             input_port = ttk.Combobox(group, state="readonly", width=30)
-            input_port.grid(row=3, column=0, sticky="ew", pady=(2, 6))
-            ttk.Label(group, text="Channel offset").grid(row=4, column=0, sticky="w")
-            offset = tk.Spinbox(group, from_=0, to=15, width=5)
-            offset.grid(row=5, column=0, sticky="w", pady=(2, 0))
-            self.device_fields.append((output_port, input_port, offset))
+            input_port.grid(row=4, column=0, columnspan=5, sticky="ew", pady=(2, 6))
+            ttk.Label(group, text="Fader mapping (mixer strip)").grid(row=5, column=0, columnspan=5, sticky="w")
+            mapping_fields = []
+            for fader in range(self._fader_count(device)):
+                grid_row = 6 + fader // 3
+                grid_column = (fader % 3) * 2
+                ttk.Label(group, text="F{}".format(fader + 1)).grid(row=grid_row, column=grid_column, sticky="w", padx=(0, 3), pady=(3, 0))
+                mapping_entry = ttk.Entry(group, width=7)
+                mapping_entry.grid(row=grid_row, column=grid_column + 1, sticky="w", pady=(3, 0))
+                mapping_fields.append(mapping_entry)
+            self.device_fields.append((enabled, output_port, input_port, mapping_fields))
             devices_layout.columnconfigure(index, weight=1)
 
         buttons = ttk.Frame(content)
@@ -79,34 +126,58 @@ class SettingsWindow:
     def refresh_midi_ports(self):
         outputs = mido.get_output_names()
         inputs = mido.get_input_names()
-        for output_port, input_port, _ in self.device_fields:
+        missing_ports = []
+        for device, (_, output_port, input_port, _) in zip(self.settings["MIDI Devices"], self.device_fields):
             output_value = output_port.get()
             input_value = input_port.get()
             output_port["values"] = outputs
             input_port["values"] = inputs
-            if output_value:
+            if output_value not in outputs:
+                output_port.set("")
+                if output_value:
+                    missing_ports.append("{} output '{}'".format(device["Name"], output_value))
+            else:
                 output_port.set(output_value)
-            if input_value:
+            if input_value not in inputs:
+                input_port.set("")
+                if input_value:
+                    missing_ports.append("{} input '{}'".format(device["Name"], input_value))
+            else:
                 input_port.set(input_value)
+        if missing_ports:
+            self.status.config(text="Unavailable MIDI port(s) cleared: {}. Select current ports.".format(", ".join(missing_ports)))
 
     def _set_fields(self, settings):
-        self.mixer_ip.insert(0, settings["Mixer IP Address"])
-        self.mixer_port.delete(0, tk.END)
-        self.mixer_port.insert(0, settings["Mixer CSCP Port"])
+        self.mixer_choice.set(settings.get("Mixer Name", ""))
+        self._update_mixer_details()
         for device, fields in zip(settings["MIDI Devices"], self.device_fields):
-            output_port, input_port, offset = fields
+            enabled, output_port, input_port, mapping_fields = fields
+            enabled.set(bool(device.get("Enabled", True)))
             output_port.set(device["CSCP -> MIDI port"])
             input_port.set(device["MIDI -> CSCP port"])
-            offset.delete(0, tk.END)
-            offset.insert(0, device["Channel Offset"])
+            for mapping_entry, strip in zip(mapping_fields, device["Channel Mapping"]):
+                mapping_entry.delete(0, tk.END)
+                mapping_entry.insert(0, strip)
+
+    def _update_mixer_details(self, _event=None):
+        mixer = next((mixer for mixer in self.settings.get("Mixers", []) if mixer.get("Name") == self.mixer_choice.get()), None)
+        if mixer:
+            self.mixer_details.config(text="{} : {}".format(mixer.get("IP Address", ""), mixer.get("Port", "")))
+        else:
+            self.mixer_details.config(text="No mixer profiles configured.")
 
     def _collect_settings(self):
         settings = dict(self.settings)
-        settings["Mixer IP Address"] = self.mixer_ip.get().strip()
-        settings["Mixer CSCP Port"] = int(self.mixer_port.get())
+        settings["Mixer Name"] = self.mixer_choice.get()
         settings["MIDI Devices"] = [
-            {"CSCP -> MIDI port": output_port.get(), "MIDI -> CSCP port": input_port.get(), "Channel Offset": int(offset.get())}
-            for output_port, input_port, offset in self.device_fields
+            {
+                **device,
+                "Enabled": enabled.get(),
+                "CSCP -> MIDI port": output_port.get(),
+                "MIDI -> CSCP port": input_port.get(),
+                "Channel Mapping": [int(field.get()) for field in mapping_fields],
+            }
+            for device, (enabled, output_port, input_port, mapping_fields) in zip(settings["MIDI Devices"], self.device_fields)
         ]
         return settings
 
@@ -114,11 +185,19 @@ class SettingsWindow:
         try:
             settings = self._collect_settings()
         except ValueError:
-            self.status.config(text="CSCP port and channel offsets must be whole numbers.")
+            self.status.config(text="Every fader mapping must be a whole positive mixer strip number.")
             return
-        if not settings["Mixer IP Address"] or any(not device["CSCP -> MIDI port"] or not device["MIDI -> CSCP port"] for device in settings["MIDI Devices"]):
-            self.status.config(text="Select a mixer IP address and all MIDI ports before applying.")
+        if not settings["Mixer Name"]:
+            self.status.config(text="Select a mixer before applying.")
             return
+        missing_ports = [device["Name"] for device in settings["MIDI Devices"] if device["Enabled"] and (not device["CSCP -> MIDI port"] or not device["MIDI -> CSCP port"])]
+        if missing_ports:
+            self.status.config(text="Select available MIDI input and output ports for: {}.".format(", ".join(missing_ports)))
+            return
+        if any(strip < 1 or strip > 65536 for device in settings["MIDI Devices"] if device["Enabled"] for strip in device["Channel Mapping"]):
+            self.status.config(text="Fader mappings must be from 1 to 65536 (the CSCP strip range).")
+            return
+        config.set_debug_logging(settings["Debug Logging"])
         try:
             self.controller.start(settings)
         except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError) as error:

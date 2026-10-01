@@ -14,6 +14,17 @@ import mido  # MIDI library (used to get the available MIDI ports)
 CONFIG_FILE = "settings.json"
 MODES = (("CC", "korg_default_cc.json"),
          ("Sonar/Reaper", "korg_sonar_reaper.json"))
+DEBUG_LOGGING = False
+
+
+def set_debug_logging(enabled):
+    global DEBUG_LOGGING
+    DEBUG_LOGGING = bool(enabled)
+
+
+def debug_log(message):
+    if DEBUG_LOGGING:
+        print(message, flush=True)
 
 
 # THESE FIRST FUNCTIONS ARE INTENDED FOR PRIVATE USE,
@@ -196,6 +207,14 @@ def get_settings():
 def save_settings(config):
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=4)
+
+
+def get_mixer(settings):
+    """Return the selected mixer profile from settings."""
+    for mixer in settings.get("Mixers", []):
+        if mixer.get("Name") == settings.get("Mixer Name"):
+            return mixer
+    raise ValueError("Selected mixer profile was not found.")
 
 
 if __name__ == '__main__':

@@ -1,6 +1,7 @@
 # Converts CSCP_decode message object and converts to mido MIDI message object ready to send
 
 import mido
+import CSCP_MIDI_settings as config
 
 # TODO - fix fader jitter - noticed MIDI returns value-1 everytime?
 # - check this hypothesis, there could be a simple fix
@@ -27,23 +28,32 @@ def adjust_scale(value):
     return level
 
 
-def convert_message(msg, mapping):
+def convert_message(msg, mapping, channel_mapping=None):
     # message = CSCP_decode.Message(message)
-    print(msg)
+    config.debug_log("[CSCP->MIDI] Received {}".format(msg))
+    channel = msg.strip
+    if channel_mapping is not None:
+        try:
+            channel = channel_mapping.index(msg.strip + 1)
+        except ValueError:
+            return False
+
     if msg.operation == "fader_move":
         mtype = "pitchwheel"
         try:
-            strip = mapping["CSCP to MIDI"]["strip_to_ch"][str(msg.strip)]
+            if channel_mapping is None:
+                channel = mapping["CSCP to MIDI"]["strip_to_ch"][str(msg.strip)]
         except KeyError:
             return False
         value = adjust_scale(msg.value)
-        midi = mido.Message(mtype, channel=strip, pitch=value)
+        midi = mido.Message(mtype, channel=channel, pitch=value)
         return midi
 
     if msg.operation == "pfl_toggle":
         mtype = "note_on"
         try:
-            note = mapping["CSCP to MIDI"]["pfl_strip_to_note"][str(msg.strip)]
+            note_strip = channel if channel_mapping is not None else msg.strip
+            note = mapping["CSCP to MIDI"]["pfl_strip_to_note"][str(note_strip)]
         except KeyError:
             return False
         # TODO - handle two-way toggling of controls properly!
@@ -56,13 +66,14 @@ def convert_message(msg, mapping):
             velocity = 0
         """
         velocity = 127
-        midi = mido.Message(mtype, note=note, velocity=velocity)
+        midi = mido.Message(mtype, channel=channel, note=note, velocity=velocity)
         return midi
 
     if msg.operation == "cut_toggle":
         mtype = "note_on"
         try:
-            note = mapping["CSCP to MIDI"]["cut_strip_to_note"][str(msg.strip)]
+            note_strip = channel if channel_mapping is not None else msg.strip
+            note = mapping["CSCP to MIDI"]["cut_strip_to_note"][str(note_strip)]
         except KeyError:
             return False
         # CSCP's Cut state logic is reversed, true/1 = uncut/passing audio, false/0 = cut
@@ -76,7 +87,7 @@ def convert_message(msg, mapping):
             velocity = 127
         """
         velocity = 127
-        midi = mido.Message(mtype, note=note, velocity=velocity)
+        midi = mido.Message(mtype, channel=channel, note=note, velocity=velocity)
         return midi
 
     return False

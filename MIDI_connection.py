@@ -10,6 +10,7 @@ import threading
 from collections import deque
 
 import mido
+import CSCP_MIDI_settings as config
 
 
 class Connection:
@@ -21,7 +22,10 @@ class Connection:
         self.messages_available = messages_available
         self.stopped = threading.Event()
         self.input_port = None
-        self.transmitter = mido.open_output(self.output)
+        try:
+            self.transmitter = mido.open_output(self.output)
+        except (OSError, IOError) as error:
+            raise OSError("Unable to open MIDI output port '{}': {}".format(self.output, error)) from error
 
         self.receiver = threading.Thread(target=self._run)  # target is the method called when thread starts
         self.receiver.daemon = True  # Important - without this, cannot kill with control+c
@@ -31,19 +35,26 @@ class Connection:
         """
         Start listening for messages on the MIDI input
         """
-        input_port = mido.open_input(self.input)
-        self.input_port = input_port
+        input_port = None
         try:
-            print("{} - MIDI input port is listening for control messages".format(input_port))
+            config.debug_log("[MIDI RX] Opening input port '{}'...".format(self.input))
+            input_port = mido.open_input(self.input)
+            self.input_port = input_port
+            config.debug_log("[MIDI RX] Input port '{}' is open and listening.".format(self.input))
             for msg in input_port:
                 if self.stopped.is_set():
                     break
+                config.debug_log("[MIDI RX] Port '{}' received {}".format(self.input, msg))
                 self.messages.append(msg)
                 if self.messages_available is not None:
                     self.messages_available.set()
+        except Exception as error:
+            if not self.stopped.is_set():
+                print("[MIDI RX] Input reader for '{}' failed: {}".format(self.input, error), flush=True)
         finally:
             self.input_port = None
-            input_port.close()
+            if input_port is not None:
+                input_port.close()
 
     # The following are intended to be externally accessed/public methods
     def get_message(self):

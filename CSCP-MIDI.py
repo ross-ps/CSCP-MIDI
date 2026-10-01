@@ -13,6 +13,7 @@ from SettingsWindow import SettingsWindow
 
 import CSCP_connection
 import CSCP_to_MIDI
+import CSCP_MIDI_settings as config
 import MIDI_connection
 import MIDI_to_CSCP
 import traceback
@@ -58,17 +59,29 @@ class AppController:
             try:
                 with open(settings["Mode/Mapping"][1], "r") as control_map_file:
                     self.control_map = json.load(control_map_file)
+                for index, device in enumerate(settings["MIDI Devices"]):
+                    if not device.get("Enabled", True):
+                        config.debug_log("[MIDI->CSCP] Device '{}' is disabled.".format(device.get("Name", index + 1)))
+                        continue
+                    config.debug_log("[MIDI->CSCP] Active device {} '{}': input='{}', channel mapping={}".format(
+                        index + 1,
+                        device.get("Name", "MIDI device {}".format(index + 1)),
+                        device["MIDI -> CSCP port"],
+                        device["Channel Mapping"],
+                    ))
                 self.midi_connections = [
                     MIDI_connection.Connection(
                         device["MIDI -> CSCP port"],
                         device["CSCP -> MIDI port"],
                         self.messages_available,
                     )
+                    if device.get("Enabled", True) else None
                     for device in settings["MIDI Devices"]
                 ]
+                mixer = config.get_mixer(settings)
                 self.cscp = CSCP_connection.Connection(
-                    settings["Mixer IP Address"],
-                    settings["Mixer CSCP Port"],
+                    mixer["IP Address"],
+                    int(mixer["Port"]),
                     self.messages_available,
                 )
             except Exception:
@@ -78,7 +91,8 @@ class AppController:
     def stop(self):
         with self.lock:
             for connection in self.midi_connections:
-                connection.close()
+                if connection is not None:
+                    connection.close()
             self.midi_connections = []
             if self.cscp is not None:
                 self.cscp.close()
@@ -91,26 +105,52 @@ class AppController:
                 return
 
             for index, midi_connection in enumerate(self.midi_connections):
+                if midi_connection is None:
+                    continue
                 midi_message = midi_connection.get_message()
                 while midi_message:
+                    device = settings["MIDI Devices"][index]
+                    device_name = device.get("Name", "MIDI device {}".format(index + 1))
+                    config.debug_log("[MIDI->CSCP] Dispatching from '{}': type={}, channel={}, message={}.".format(
+                        device_name,
+                        midi_message.type,
+                        getattr(midi_message, "channel", "n/a"),
+                        midi_message,
+                    ))
+                    cscp_message = MIDI_to_CSCP.convert_message(
+                        midi_message,
+                        self.control_map,
+                        device["Channel Mapping"],
+                    )
 
-                    midi_message.channel += settings["MIDI Devices"][index]["Channel Offset"]
-
-                    cscp_message = MIDI_to_CSCP.convert_message(midi_message, self.control_map, settings["MIDI Devices"][index]["Channel Offset"])
-
-                    if cscp_message and self.cscp.status == "Connected":
-                        self.cscp.send(cscp_message.encoded)
+                    if cscp_message:
+                        if self.cscp.status == "Connected":
+                            config.debug_log("[MIDI->CSCP] Device '{}' sending CSCP operation={}, strip={}, value={}, bytes={}.".format(
+                                device_name,
+                                cscp_message.operation,
+                                cscp_message.strip,
+                                cscp_message.value,
+                                cscp_message.encoded.hex(" "),
+                            ))
+                            self.cscp.send(cscp_message.encoded)
+                        else:
+                            config.debug_log("[MIDI->CSCP] Device '{}' mapped the event to {}, but mixer status is '{}'; message not sent.".format(device_name, cscp_message, self.cscp.status))
+                    else:
+                        config.debug_log("[MIDI->CSCP] Device '{}' produced no CSCP message for {}.".format(device_name, midi_message))
                     midi_message = midi_connection.get_message()
 
             cscp_message = self.cscp.get_message()
             while cscp_message:
-                midi_message = CSCP_to_MIDI.convert_message(cscp_message, self.control_map)
-                if midi_message:
-                    
-                    for i, midi_connection in enumerate(self.midi_connections):
-                        if(midi_message.channel >= settings["MIDI Devices"][i]["Channel Offset"] and midi_message.channel < settings["MIDI Devices"][i]["Channel Offset"]+8):
-                            midi_message.channel -= settings["MIDI Devices"][i]["Channel Offset"]
-                            midi_connection.send_message(midi_message)
+                for index, midi_connection in enumerate(self.midi_connections):
+                    if midi_connection is None:
+                        continue
+                    midi_message = CSCP_to_MIDI.convert_message(
+                        cscp_message,
+                        self.control_map,
+                        settings["MIDI Devices"][index]["Channel Mapping"],
+                    )
+                    if midi_message:
+                        midi_connection.send_message(midi_message)
                 cscp_message = self.cscp.get_message()
 
 

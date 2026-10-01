@@ -9,6 +9,7 @@
 
 
 import CSCP_encode
+import CSCP_MIDI_settings as config
 
 
 def _adjust_scale(level):
@@ -30,7 +31,7 @@ def _adjust_scale(level):
     return converted_level
 
 
-def convert_message(message, mapping, offset=0):
+def convert_message(message, mapping, channel_mapping=None):
     """
     :param message: MIDI message from mido
     :param mapping: dict loaded from json control mapping file
@@ -40,25 +41,64 @@ def convert_message(message, mapping, offset=0):
     # (not too bad at the moment, but as I add more controls and different mappings/modes it will get cumbersome
     # TODO - passing the control mapping dict for each message feels inefficient
     if message.type == "pitchwheel":
+        config.debug_log("[MIDI->CSCP] Pitchwheel channel {} received; channel mapping: {}".format(message.channel, channel_mapping))
         try:
             command = mapping["control_map"]["pitchwheel"]["command"]
-            strip = mapping["control_map"]["pitchwheel"]["ch_to_strip"][str(message.channel)]
+            if channel_mapping is None:
+                strip = mapping["control_map"]["pitchwheel"]["ch_to_strip"][str(message.channel)]
+            else:
+                strip = channel_mapping[message.channel] - 1
             value = _adjust_scale(message.pitch)
-        except KeyError:
+        except (IndexError, KeyError, TypeError) as error:
+            config.debug_log("[MIDI->CSCP] Pitchwheel mapping failed for channel {}: {}".format(message.channel, error))
             return False
 
-        return CSCP_encode.Message(command, strip, value)
+        mapped_strip = strip + 1 if channel_mapping is not None else strip
+        config.debug_log("[MIDI->CSCP] Pitchwheel channel {} mapped to mixer strip {} (CSCP strip {}); command={}, value={}.".format(message.channel, mapped_strip, strip, command, value))
+        try:
+            cscp_message = CSCP_encode.Message(command, strip, value)
+        except Exception as error:
+            config.debug_log("[MIDI->CSCP] Failed to encode fader event for mixer strip {}: {}".format(mapped_strip, error))
+            return False
+        config.debug_log("[MIDI->CSCP] CSCP message created: operation={}, strip={}, value={}, bytes={}.".format(command, strip, value, cscp_message.encoded.hex(" ")))
+        return cscp_message
 
     elif message.type == "note_on":
+        config.debug_log("[MIDI->CSCP] Note {} velocity {} received; channel mapping: {}".format(message.note, message.velocity, channel_mapping))
         try:
-            command = mapping["control_map"]["note_on"][str(message.note)]["command"]
-            strip = mapping["control_map"]["note_on"][str(message.note)]["strip"] + offset
-            value = mapping["control_map"]["note_on"][str(message.note)]["velocity"][str(message.velocity)]
-        except KeyError:
+            note_mapping = mapping["control_map"]["note_on"][str(message.note)]
+            command = note_mapping["command"]
+            local_strip = note_mapping["strip"]
+        except (KeyError, TypeError) as error:
+            config.debug_log("[MIDI->CSCP] Note {} is not configured in the control map: {}".format(message.note, error))
+            return False
+
+        strip = local_strip
+        if channel_mapping is not None:
+            try:
+                strip = channel_mapping[local_strip] - 1
+            except (IndexError, TypeError) as error:
+                config.debug_log("[MIDI->CSCP] Note {} maps to local slot {}, but that slot is missing from channel mapping {}: {}".format(message.note, local_strip, channel_mapping, error))
+                return False
+
+        try:
+            value = note_mapping["velocity"][str(message.velocity)]
+        except (KeyError, TypeError) as error:
+            config.debug_log("[MIDI->CSCP] Note {} has no configured value for velocity {}: {}".format(message.note, message.velocity, error))
             return False
 
         # TODO - need to figure out how to handle actual state to allow toggle of function!
-        return CSCP_encode.Message(command, strip, value)
+        mapped_strip = strip + 1 if channel_mapping is not None else strip
+        config.debug_log("[MIDI->CSCP] Note {} local slot {} mapped to mixer strip {} (CSCP strip {}, command={}, value={}).".format(message.note, local_strip, mapped_strip, strip, command, value))
+        try:
+            cscp_message = CSCP_encode.Message(command, strip, value)
+        except Exception as error:
+            config.debug_log("[MIDI->CSCP] Failed to encode note event for mixer strip {}: {}".format(mapped_strip, error))
+            return False
+        config.debug_log("[MIDI->CSCP] CSCP message created: operation={}, strip={}, value={}, bytes={}.".format(command, strip, value, cscp_message.encoded.hex(" ")))
+        return cscp_message
+
+    config.debug_log("[MIDI->CSCP] Ignored unsupported MIDI message type '{}': {}".format(message.type, message))
 
 
 if __name__ == '__main__':
