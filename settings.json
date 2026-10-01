@@ -24,15 +24,15 @@
             "CSCP -> MIDI port": "iCON V1-M 1",
             "MIDI -> CSCP port": "iCON V1-M 0",
             "Channel Mapping": [
-                25,
-                26,
-                27,
-                28,
-                29,
-                30,
-                31,
-                32,
-                33
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9
             ]
         },
         {
@@ -48,7 +48,7 @@
                 14,
                 15,
                 16,
-                18
+                17
             ]
         }
     ],
@@ -57,5 +57,6 @@
         "korg_sonar_reaper.json"
     ],
     "Mixer Name": "CTA Argo S",
+    "Fader Mapping Profile": "Default",
     "Debug Logging": false
 }
